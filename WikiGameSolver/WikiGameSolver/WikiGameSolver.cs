@@ -1,5 +1,6 @@
 ﻿using HtmlAgilityPack;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -18,15 +19,12 @@ namespace WikiGameSolver
 
 
             await Console.Out.WriteLineAsync($"Enter ending subject: ");
-            string endingArticleUrl = WikiArticleAccessor.GetUrlForArticle(await GetUserInput()) ;
+            string endingArticleUrl = WikiArticleAccessor.GetUrlForArticle(await GetUserInput());
 
 
-            List<string> solvedPath = await GetSolvedPath(startingArticleUrl, endingArticleUrl);
+            Task<IEnumerable<string>> solvedPath = GetSolvedPath(startingArticleUrl, endingArticleUrl);
 
-            foreach (string path in solvedPath)
-            {
-                await Console.Out.WriteLineAsync(path);
-            }
+            await solvedPath;
 
             await Console.Out.WriteLineAsync("I am done now");
         }
@@ -39,38 +37,37 @@ namespace WikiGameSolver
             Console.WriteLine("Then i crawl through wiki and try to find a path between the two (possible the shortest)");
 
         }
-        private static async Task<List<string>> GetSolvedPath(string currentArticle, string endingArticle, List<string> path = null)
+
+        private static async Task<IEnumerable<string>> GetSolvedPath(string startingArticle, string endingArticle)
         {
-            if (path == null)
+            ConcurrentQueue<List<string>> pathQueue = new ConcurrentQueue<List<string>>();
+            HashSet<string> visited = new HashSet<string>();
+
+            List<string> startingPoint = new List<string>() { startingArticle };
+            pathQueue.Enqueue(startingPoint);
+
+            bool lookingForPath = true;
+            while (lookingForPath)
             {
-                path = new List<string>();
-            }
-
-
-            path.Add(currentArticle);
-
-            if (currentArticle == endingArticle)
-            {
-                return path;
-            }
-
-            List<string> htmlLinks = await WikiArticleAccessor.GetWikiLinksFromPage(currentArticle);
-
-            foreach (string currentLink in htmlLinks)
-            {
-                if (!path.Contains(currentLink))
+                List<string> currPath;
+                pathQueue.TryDequeue(out currPath);
+                await Console.Out.WriteLineAsync(string.Join(" -> ", currPath));
+                Task<List<string>> linksInArticle = WikiArticleAccessor.GetWikiLinksFromPage(currPath.Last());
+                foreach (string nextLink in linksInArticle.Result)
                 {
-                    await Console.Out.WriteLineAsync($"Currently checking {currentLink}, from {currentArticle}");
-
-                    List<string> solvedPath = await GetSolvedPath(currentLink, endingArticle, path);
-
-                    if (solvedPath != null)
+                    if (!visited.Contains(nextLink))
                     {
-                        return solvedPath;
+                        visited.Add(nextLink);
+                        List<string> newPath = new List<string>(currPath) { nextLink };
+                        pathQueue.Enqueue(newPath);
+                        if (nextLink == endingArticle)
+                        {
+                            lookingForPath = false; 
+                            return newPath;
+                        }
                     }
                 }
             }
-
             return null;
         }
 
