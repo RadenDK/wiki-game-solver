@@ -2,24 +2,31 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
+using static System.Net.WebRequestMethods;
 
 namespace WikiGameSolver
 {
     internal class WikiGameSolver
     {
+        private static readonly object lockObject = new object();
+        private static int _articlesVisisted;
         public static async Task StartSolver()
         {
             PrintWelcomeMessage();
 
             await Console.Out.WriteLineAsync($"Enter starting subject: ");
             string startingArticleUrl = WikiArticleAccessor.GetUrlForArticle(await GetUserInput());
+            //string startingArticleUrl = "https://en.wikipedia.org/wiki/Henrik";
 
 
             await Console.Out.WriteLineAsync($"Enter ending subject: ");
             string endingArticleUrl = WikiArticleAccessor.GetUrlForArticle(await GetUserInput());
+            //string endingArticleUrl = "https://en.wikipedia.org/wiki/Heiki_Kranich";
 
 
             Task<IEnumerable<string>> solvedPath = GetSolvedPath(startingArticleUrl, endingArticleUrl);
@@ -40,36 +47,74 @@ namespace WikiGameSolver
 
         private static async Task<IEnumerable<string>> GetSolvedPath(string startingArticle, string endingArticle)
         {
-            ConcurrentQueue<List<string>> pathQueue = new ConcurrentQueue<List<string>>();
-            HashSet<string> visited = new HashSet<string>();
+            ConcurrentQueue<LinkedList<string>> linksQueue = new ConcurrentQueue<LinkedList<string>>();
+            ConcurrentDictionary<string, bool> visited = new ConcurrentDictionary<string, bool>();
 
-            List<string> startingPoint = new List<string>() { startingArticle };
-            pathQueue.Enqueue(startingPoint);
+            LinkedList<string> startingPath = new LinkedList<string>();
+            startingPath.AddLast(startingArticle);
+            linksQueue.Enqueue(startingPath);
 
-            bool lookingForPath = true;
-            while (lookingForPath)
+            int articlesVisited = 0;
+
+            while (true)
             {
-                List<string> currPath;
-                pathQueue.TryDequeue(out currPath);
-                await Console.Out.WriteLineAsync(string.Join(" -> ", currPath));
-                Task<List<string>> linksInArticle = WikiArticleAccessor.GetWikiLinksFromPage(currPath.Last());
-                foreach (string nextLink in linksInArticle.Result)
+                LinkedList<string> currentPath;
+                linksQueue.TryDequeue(out currentPath);
+                if (currentPath != null && currentPath.Count > 0)
                 {
-                    if (!visited.Contains(nextLink))
-                    {
-                        visited.Add(nextLink);
-                        List<string> newPath = new List<string>(currPath) { nextLink };
-                        pathQueue.Enqueue(newPath);
-                        if (nextLink == endingArticle)
-                        {
-                            lookingForPath = false; 
-                            return newPath;
-                        }
-                    }
+                    FindOffspringsForPath(currentPath, visited, linksQueue, endingArticle);
+                }
+            }
+
+            return null;
+        }
+
+        private static async Task<LinkedList<string>> FindOffspringsForPath(LinkedList<string> currentPath, ConcurrentDictionary<string, bool> visited, ConcurrentQueue<LinkedList<string>> linksQueue, string endingArticle)
+        {
+            List<string> htmlLinksFromCurrentArticle = await WikiArticleAccessor.GetWikiLinksFromPage(currentPath.Last.Value);
+            foreach (string link in htmlLinksFromCurrentArticle)
+            {
+                LinkedList<string> newPath = new LinkedList<string>(currentPath);
+                if (!visited.ContainsKey(link))
+                {
+                    PrintAmountOfArticlesSearched();
+                    visited.TryAdd(link, true);
+                    newPath.AddLast(link);
+                    linksQueue.Enqueue(newPath);
+                }
+                if (link == endingArticle)
+                {
+                    PrintPath(newPath);
+                    Environment.Exit(0);
                 }
             }
             return null;
         }
+        private static void PrintAmountOfArticlesSearched()
+        {
+            lock (lockObject)
+            {
+                Interlocked.Increment(ref _articlesVisisted);
+                Console.SetCursorPosition(0, Console.CursorTop);
+                Console.Write($"I have looked at : {_articlesVisisted} articles");
+                Console.SetCursorPosition(0, Console.CursorTop);
+            }
+            
+        }
+
+        private static void PrintPath(LinkedList<string> foundPath)
+        {
+            Console.WriteLine("This is the solved Path");
+            Console.WriteLine();
+            foreach (string htmlLink in foundPath)
+            {
+                Console.Write(htmlLink);
+                Console.WriteLine();
+            }
+        }
+
+
+
 
         private static async Task<string> GetUserInput()
         {
@@ -86,7 +131,5 @@ namespace WikiGameSolver
 
             return articleSubject;
         }
-
-
     }
 }

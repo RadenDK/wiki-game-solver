@@ -56,7 +56,6 @@ namespace WikiGameSolver
             }
             catch (HttpRequestException)
             {
-                await Console.Out.WriteLineAsync($"Invalid article: {url}");
             }
             return html;
         }
