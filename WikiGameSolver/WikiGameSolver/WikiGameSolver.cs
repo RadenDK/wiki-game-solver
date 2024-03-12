@@ -13,25 +13,30 @@ namespace WikiGameSolver
 {
     internal class WikiGameSolver
     {
-        private static readonly object lockObject = new object();
+        private static readonly object _articleNumPrintLock = new object();
         private static int _articlesVisisted;
-        public static async Task StartSolver()
+
+        public static async Task StartSolver(string userInputStartingArticle = null, string userInputEndingArticle = null)
         {
             PrintWelcomeMessage();
 
-            await Console.Out.WriteLineAsync($"Enter starting subject: ");
-            string startingArticleUrl = WikiArticleAccessor.GetUrlForArticle(await GetUserInput());
-            //string startingArticleUrl = "https://en.wikipedia.org/wiki/Henrik";
+            if (userInputStartingArticle == null)
+            {
+                await Console.Out.WriteLineAsync($"Enter starting subject: ");
+                userInputStartingArticle = await GetUserInput();
+                string startingArticleUrl = WikiArticleAccessor.GetUrlForArticle(userInputStartingArticle);
+            }
 
+            if (userInputEndingArticle == null)
+            {
+                userInputEndingArticle = await GetUserInput();
+                await Console.Out.WriteLineAsync($"Enter ending subject: ");
+                string endingArticleUrl = WikiArticleAccessor.GetUrlForArticle(userInputEndingArticle);
+            }
 
-            await Console.Out.WriteLineAsync($"Enter ending subject: ");
-            string endingArticleUrl = WikiArticleAccessor.GetUrlForArticle(await GetUserInput());
-            //string endingArticleUrl = "https://en.wikipedia.org/wiki/Heiki_Kranich";
+            LinkedList<string> solvedPath = await SolvePathBetweenArticles(userInputStartingArticle, userInputEndingArticle);
 
-
-            Task<IEnumerable<string>> solvedPath = GetSolvedPath(startingArticleUrl, endingArticleUrl);
-
-            await solvedPath;
+            PrintPath(solvedPath);
 
             await Console.Out.WriteLineAsync("I am done now");
         }
@@ -42,27 +47,24 @@ namespace WikiGameSolver
             Console.WriteLine("How it works is simple at first you enter the starting point subject");
             Console.WriteLine("Then you enter what the ending point subject is");
             Console.WriteLine("Then i crawl through wiki and try to find a path between the two (possible the shortest)");
-
         }
 
-        private static async Task<IEnumerable<string>> GetSolvedPath(string startingArticle, string endingArticle)
+        private static async Task<LinkedList<string>> SolvePathBetweenArticles(string startingArticle, string endingArticle)
         {
-            ConcurrentQueue<LinkedList<string>> linksQueue = new ConcurrentQueue<LinkedList<string>>();
-            ConcurrentDictionary<string, bool> visited = new ConcurrentDictionary<string, bool>();
+            ConcurrentQueue<LinkedList<string>> currentUnsolvedPathsQueue = new ConcurrentQueue<LinkedList<string>>();
+            ConcurrentDictionary<string, bool> visitedLinks = new ConcurrentDictionary<string, bool>();
 
             LinkedList<string> startingPath = new LinkedList<string>();
             startingPath.AddLast(startingArticle);
-            linksQueue.Enqueue(startingPath);
-
-            int articlesVisited = 0;
+            currentUnsolvedPathsQueue.Enqueue(startingPath);
 
             while (true)
             {
                 LinkedList<string> currentPath;
-                linksQueue.TryDequeue(out currentPath);
+                currentUnsolvedPathsQueue.TryDequeue(out currentPath);
                 if (currentPath != null && currentPath.Count > 0)
                 {
-                    FindOffspringsForPath(currentPath, visited, linksQueue, endingArticle);
+                    FindOffspringsForPath(currentPath, visitedLinks, currentUnsolvedPathsQueue, endingArticle);
                 }
             }
 
@@ -71,7 +73,7 @@ namespace WikiGameSolver
 
         private static async Task<LinkedList<string>> FindOffspringsForPath(LinkedList<string> currentPath, ConcurrentDictionary<string, bool> visited, ConcurrentQueue<LinkedList<string>> linksQueue, string endingArticle)
         {
-            List<string> htmlLinksFromCurrentArticle = await WikiArticleAccessor.GetWikiLinksFromPage(currentPath.Last.Value);
+            List<string> htmlLinksFromCurrentArticle = await WikiArticleAccessor.FetchWikiLinksFromUrl(currentPath.Last.Value);
             foreach (string link in htmlLinksFromCurrentArticle)
             {
                 LinkedList<string> newPath = new LinkedList<string>(currentPath);
@@ -92,14 +94,14 @@ namespace WikiGameSolver
         }
         private static void PrintAmountOfArticlesSearched()
         {
-            lock (lockObject)
+            lock (_articleNumPrintLock)
             {
-                Interlocked.Increment(ref _articlesVisisted);
+                _articlesVisisted++;
                 Console.SetCursorPosition(0, Console.CursorTop);
                 Console.Write($"I have looked at : {_articlesVisisted} articles");
                 Console.SetCursorPosition(0, Console.CursorTop);
             }
-            
+
         }
 
         private static void PrintPath(LinkedList<string> foundPath)
@@ -113,9 +115,6 @@ namespace WikiGameSolver
             }
         }
 
-
-
-
         private static async Task<string> GetUserInput()
         {
             string articleSubject = "";
@@ -123,7 +122,7 @@ namespace WikiGameSolver
 
             articleSubject = Console.ReadLine();
 
-            while (!await WikiArticleAccessor.WikiArticleUrlIsValid(articleSubject))
+            while (!await WikiArticleAccessor.WikiArticleExists(articleSubject))
             {
                 await Console.Out.WriteLineAsync("Invalid article subject please try again");
                 articleSubject = Console.ReadLine();

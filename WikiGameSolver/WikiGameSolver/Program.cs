@@ -8,7 +8,22 @@ namespace WikiGameSolver
     {
         static async Task Main(string[] args)
         {
-            await WikiGameSolver.StartSolver();
+            if (args.Length != 0 || args.Length != 2)
+            {
+                await WikiGameSolver.StartSolver();
+
+            }
+            if (args.Length != 2)
+            {
+                await WikiGameSolver.StartSolver(args[1] args[2]);
+
+            }
+            else
+            {
+                await Console.Out.WriteLineAsync("Invalid Args input");
+
+
+            }
         }
     }
 }

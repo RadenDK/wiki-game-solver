@@ -9,16 +9,19 @@ namespace WikiGameSolver
 {
     internal class WikiArticleAccessor
     {
-
         private static readonly string _baseWikiUrl = "https://en.wikipedia.org/wiki/";
-        public static async Task<List<string>> GetWikiLinksFromPage(string wikiPageUrl)
+
+        private static HtmlDocument htmlDocument = new HtmlDocument();
+
+        private static HttpClient httpClient = new HttpClient();
+
+        public static async Task<List<string>> FetchWikiLinksFromUrl(string wikiPageUrl)
         {
-            string html = await GetHtmlFromUrl(wikiPageUrl);
+            string html = await FetchHtmlFromUrl(wikiPageUrl);
 
-            var htmlDoc = new HtmlDocument();
-            htmlDoc.LoadHtml(html);
+            htmlDocument.LoadHtml(html);
 
-            HtmlNodeCollection htmlLinkNodes = htmlDoc.DocumentNode.SelectNodes("//div[@id='mw-content-text']//a[not(ancestor::table)]/@href");
+            HtmlNodeCollection htmlLinkNodes = htmlDocument.DocumentNode.SelectNodes("//div[@id='mw-content-text']//a[not(ancestor::table)]/@href");
 
             List<string> wikiLinks = new List<string>();
             if (htmlLinkNodes != null)
@@ -40,11 +43,11 @@ namespace WikiGameSolver
             return wikiLinks;
         }
 
-        private static async Task<string> GetHtmlFromUrl(string url)
+        private static async Task<string> FetchHtmlFromUrl(string url)
         {
-            var client = new HttpClient();
+           
             var request = new HttpRequestMessage(HttpMethod.Get, url);
-            var response = await client.SendAsync(request);
+            var response = await httpClient.SendAsync(request);
 
             string html = "";
 
@@ -57,25 +60,24 @@ namespace WikiGameSolver
             catch (HttpRequestException)
             {
             }
+
             return html;
         }
 
-        public static async Task<bool> WikiArticleUrlIsValid(string articleSubject)
+        public static async Task<bool> WikiArticleExists(string articleSubject)
         {
             string wikiPageUrl = _baseWikiUrl + articleSubject.Replace(" ", "_");
-
-
-            var client = new HttpClient();
 
             var request = new HttpRequestMessage(HttpMethod.Get, wikiPageUrl);
 
             bool isValid = true;
+
             try
             {
                 await Console.Out.WriteLineAsync($"Checking if there is an article for {articleSubject}");
                 await Console.Out.WriteLineAsync($"Checking url {wikiPageUrl}");
 
-                var response = await client.SendAsync(request);
+                var response = await httpClient.SendAsync(request);
                 response.EnsureSuccessStatusCode();
 
                 await Console.Out.WriteLineAsync("Article found!");
