@@ -1,6 +1,8 @@
 ﻿using HtmlAgilityPack;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Runtime.CompilerServices;
+using Serilog;
 
 namespace WikiGameSolver
 {
@@ -8,22 +10,40 @@ namespace WikiGameSolver
     {
         static async Task Main(string[] args)
         {
-            if (args.Length != 0 || args.Length != 2)
-            {
-                await WikiGameSolver.StartSolver();
+            ILoggerFactory loggerFactory = CreateLogger();
 
-            }
-            if (args.Length != 2)
-            {
-                await WikiGameSolver.StartSolver(args[1] args[2]);
+            WikiGameSolver wikiSolver = new WikiGameSolver(loggerFactory);
 
-            }
-            else
-            {
-                await Console.Out.WriteLineAsync("Invalid Args input");
+            await wikiSolver.StartSolver();
 
-
-            }
         }
+
+        static ILoggerFactory CreateLogger()
+        {
+            string logFilePath = "C:\\Users\\Rasmus\\Documents\\GitHub\\wiki-game-solver\\WikiGameSolver\\log.txt";
+
+            if (File.Exists(logFilePath))
+            {
+                File.Delete(logFilePath);
+            }
+
+            Log.Logger = new LoggerConfiguration()
+        .WriteTo.File(logFilePath,
+         rollOnFileSizeLimit: true,
+         retainedFileCountLimit: 1)
+        .CreateLogger();
+
+
+            ILoggerFactory loggerFactory = LoggerFactory.Create(builder =>
+            {
+                builder
+                    .AddSerilog() // Use Serilog as the logging provider
+                    .SetMinimumLevel(LogLevel.Debug); // Set log level
+            });
+
+            return loggerFactory;
+
+        }
+
     }
 }
