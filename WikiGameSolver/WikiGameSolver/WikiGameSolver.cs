@@ -1,4 +1,5 @@
 ﻿using HtmlAgilityPack;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -13,35 +14,42 @@ namespace WikiGameSolver
 {
     internal class WikiGameSolver
     {
-        private static readonly object _articleNumPrintLock = new object();
-        private static int _articlesVisisted;
+        private const int MaxConcurrentTasks = 20;
 
-        public static async Task StartSolver(string userInputStartingArticle = null, string userInputEndingArticle = null)
+        private readonly object _articleNumPrintLock = new object();
+        private int _articlesVisisted;
+
+        private CancellationTokenSource cts = new CancellationTokenSource();
+
+
+        private WikiArticleAccessor _wikiArticleAccessor;
+
+        private ILogger _logger;
+
+        public WikiGameSolver(ILoggerFactory loggerFactory)
+        {
+            _logger = loggerFactory.CreateLogger<WikiGameSolver>();
+            _wikiArticleAccessor = new WikiArticleAccessor(loggerFactory);
+        }
+
+
+        public async Task StartSolver()
         {
             PrintWelcomeMessage();
 
-            if (userInputStartingArticle == null)
-            {
-                await Console.Out.WriteLineAsync($"Enter starting subject: ");
-                userInputStartingArticle = await GetUserInput();
-                string startingArticleUrl = WikiArticleAccessor.GetUrlForArticle(userInputStartingArticle);
-            }
+            await Console.Out.WriteLineAsync($"Enter starting subject: ");
+            string startingArticleUrl = await GetValidUrlFromUserArticleInput();
 
-            if (userInputEndingArticle == null)
-            {
-                userInputEndingArticle = await GetUserInput();
-                await Console.Out.WriteLineAsync($"Enter ending subject: ");
-                string endingArticleUrl = WikiArticleAccessor.GetUrlForArticle(userInputEndingArticle);
-            }
+            await Console.Out.WriteLineAsync($"Enter ending subject: ");
+            string endingArticleUrl = await GetValidUrlFromUserArticleInput();
 
-            LinkedList<string> solvedPath = await SolvePathBetweenArticles(userInputStartingArticle, userInputEndingArticle);
+
+            LinkedList<string> solvedPath = await SolvePathBetweenArticles(startingArticleUrl, endingArticleUrl);
 
             PrintPath(solvedPath);
-
-            await Console.Out.WriteLineAsync("I am done now");
         }
 
-        private static void PrintWelcomeMessage()
+        private void PrintWelcomeMessage()
         {
             Console.WriteLine("Welcome to my attempt at making an wiki game solver");
             Console.WriteLine("How it works is simple at first you enter the starting point subject");
@@ -49,7 +57,7 @@ namespace WikiGameSolver
             Console.WriteLine("Then i crawl through wiki and try to find a path between the two (possible the shortest)");
         }
 
-        private static async Task<LinkedList<string>> SolvePathBetweenArticles(string startingArticle, string endingArticle)
+        private async Task<LinkedList<string>> SolvePathBetweenArticles(string startingArticle, string endingArticle)
         {
             ConcurrentQueue<LinkedList<string>> currentUnsolvedPathsQueue = new ConcurrentQueue<LinkedList<string>>();
             ConcurrentDictionary<string, bool> visitedLinks = new ConcurrentDictionary<string, bool>();
@@ -58,41 +66,69 @@ namespace WikiGameSolver
             startingPath.AddLast(startingArticle);
             currentUnsolvedPathsQueue.Enqueue(startingPath);
 
-            while (true)
+            LinkedList<string> solvedPath = null;
+
+            _logger.LogInformation($"Begins going through queue");
+
+            List<Task<LinkedList<string>>> tasks = new List<Task<LinkedList<string>>>();
+
+            while (!cts.Token.IsCancellationRequested)
             {
                 LinkedList<string> currentPath;
                 currentUnsolvedPathsQueue.TryDequeue(out currentPath);
+
                 if (currentPath != null && currentPath.Count > 0)
                 {
-                    FindOffspringsForPath(currentPath, visitedLinks, currentUnsolvedPathsQueue, endingArticle);
+                    var task = FindOffspringsForPath(currentPath, visitedLinks, currentUnsolvedPathsQueue, endingArticle);
+                    tasks.Add(task);
+
+                    if (tasks.Count >= MaxConcurrentTasks)
+                    {
+                        var completedTask = await Task.WhenAny(tasks);
+                        tasks.Remove(completedTask);
+
+                        if (completedTask.Result != null)
+                        {
+                            solvedPath = completedTask.Result;
+                        }
+                    }
                 }
             }
 
-            return null;
+            return solvedPath;
+
         }
 
-        private static async Task<LinkedList<string>> FindOffspringsForPath(LinkedList<string> currentPath, ConcurrentDictionary<string, bool> visited, ConcurrentQueue<LinkedList<string>> linksQueue, string endingArticle)
+        private async Task<LinkedList<string>> FindOffspringsForPath(LinkedList<string> currentPath, ConcurrentDictionary<string, bool> visited, ConcurrentQueue<LinkedList<string>> linksQueue, string endingArticle)
         {
-            List<string> htmlLinksFromCurrentArticle = await WikiArticleAccessor.FetchWikiLinksFromUrl(currentPath.Last.Value);
+            List<string> htmlLinksFromCurrentArticle = await _wikiArticleAccessor.FetchWikiLinksFromUrl(currentPath.Last.Value);
+            PrintAmountOfArticlesSearched();
             foreach (string link in htmlLinksFromCurrentArticle)
             {
+
                 LinkedList<string> newPath = new LinkedList<string>(currentPath);
                 if (!visited.ContainsKey(link))
                 {
-                    PrintAmountOfArticlesSearched();
                     visited.TryAdd(link, true);
                     newPath.AddLast(link);
                     linksQueue.Enqueue(newPath);
+
                 }
                 if (link == endingArticle)
                 {
-                    PrintPath(newPath);
-                    Environment.Exit(0);
+                    _logger.LogInformation($"Found ending the article");
+
+                    cts.Cancel();
+                    return newPath;
                 }
+
             }
+            _logger.LogInformation($"Added {htmlLinksFromCurrentArticle.Count} articles to Queue after looking at {currentPath.Last.Value}");
+            
             return null;
         }
-        private static void PrintAmountOfArticlesSearched()
+
+        private void PrintAmountOfArticlesSearched()
         {
             lock (_articleNumPrintLock)
             {
@@ -104,10 +140,9 @@ namespace WikiGameSolver
 
         }
 
-        private static void PrintPath(LinkedList<string> foundPath)
+        private void PrintPath(LinkedList<string> foundPath)
         {
             Console.WriteLine("This is the solved Path");
-            Console.WriteLine();
             foreach (string htmlLink in foundPath)
             {
                 Console.Write(htmlLink);
@@ -115,20 +150,19 @@ namespace WikiGameSolver
             }
         }
 
-        private static async Task<string> GetUserInput()
+        private async Task<string> GetValidUrlFromUserArticleInput()
         {
-            string articleSubject = "";
+            _logger.LogInformation($"Getting an article from the user");
 
+            string validUrl = null;
 
-            articleSubject = Console.ReadLine();
-
-            while (!await WikiArticleAccessor.WikiArticleExists(articleSubject))
+            while (validUrl == null)
             {
-                await Console.Out.WriteLineAsync("Invalid article subject please try again");
-                articleSubject = Console.ReadLine();
+                string userArticleInput = Console.ReadLine();
+                validUrl = await _wikiArticleAccessor.GetFoundUrlFromArticleSubject(userArticleInput);
             }
 
-            return articleSubject;
+            return validUrl;
         }
     }
 }

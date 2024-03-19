@@ -4,26 +4,39 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace WikiGameSolver
 {
     internal class WikiArticleAccessor
     {
-        private static readonly string _baseWikiUrl = "https://en.wikipedia.org/wiki/";
+        private readonly string _baseWikiUrl = "https://en.wikipedia.org/wiki/";
 
-        private static HtmlDocument htmlDocument = new HtmlDocument();
+        private HttpClient _httpClient;
 
-        private static HttpClient httpClient = new HttpClient();
+        private ILogger<WikiArticleAccessor> _logger;
 
-        public static async Task<List<string>> FetchWikiLinksFromUrl(string wikiPageUrl)
+        public WikiArticleAccessor(ILoggerFactory loggerFactory)
         {
+            _httpClient = new HttpClient();
+            _logger = loggerFactory.CreateLogger<WikiArticleAccessor>();
+        }
+
+        public async Task<List<string>> FetchWikiLinksFromUrl(string wikiPageUrl)
+        {
+
             string html = await FetchHtmlFromUrl(wikiPageUrl);
+
+            HtmlDocument htmlDocument = new HtmlDocument();
 
             htmlDocument.LoadHtml(html);
 
             HtmlNodeCollection htmlLinkNodes = htmlDocument.DocumentNode.SelectNodes("//div[@id='mw-content-text']//a[not(ancestor::table)]/@href");
 
             List<string> wikiLinks = new List<string>();
+
+            _logger.LogInformation($"Started finding HTML links from {wikiPageUrl}");
+
             if (htmlLinkNodes != null)
             {
                 foreach (HtmlNode node in htmlLinkNodes)
@@ -40,14 +53,18 @@ namespace WikiGameSolver
                 }
             }
 
+            _logger.LogInformation($"Finished finding HTML links from {wikiPageUrl}");
+
             return wikiLinks;
         }
 
-        private static async Task<string> FetchHtmlFromUrl(string url)
+        private async Task<string> FetchHtmlFromUrl(string url)
         {
-           
+
+            _logger.LogInformation($"Started fetching HTML from {url}");
+
             var request = new HttpRequestMessage(HttpMethod.Get, url);
-            var response = await httpClient.SendAsync(request);
+            var response = await _httpClient.SendAsync(request);
 
             string html = "";
 
@@ -55,43 +72,54 @@ namespace WikiGameSolver
             {
                 response.EnsureSuccessStatusCode();
                 html = await response.Content.ReadAsStringAsync();
+                _logger.LogInformation($"Finished fetching HTML from {url}");
+
 
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException ex)
             {
+                _logger.LogError(ex, $"Failed to fetch HTML from {url}");
             }
+
+
 
             return html;
         }
 
-        public static async Task<bool> WikiArticleExists(string articleSubject)
+        public async Task<string> GetFoundUrlFromArticleSubject(string articleSubject)
         {
             string wikiPageUrl = _baseWikiUrl + articleSubject.Replace(" ", "_");
 
-            var request = new HttpRequestMessage(HttpMethod.Get, wikiPageUrl);
+            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, wikiPageUrl);
 
-            bool isValid = true;
+            string foundUrl = null;
 
             try
             {
                 await Console.Out.WriteLineAsync($"Checking if there is an article for {articleSubject}");
-                await Console.Out.WriteLineAsync($"Checking url {wikiPageUrl}");
 
-                var response = await httpClient.SendAsync(request);
+                _logger.LogInformation($"Checking if there is an article for {articleSubject}");
+
+                HttpResponseMessage response = await _httpClient.SendAsync(request);
                 response.EnsureSuccessStatusCode();
 
+                foundUrl = response.RequestMessage.RequestUri.ToString();
+
                 await Console.Out.WriteLineAsync("Article found!");
+
+                _logger.LogInformation($"An article has been found for {articleSubject} the url is {foundUrl}");
+
             }
             catch (Exception e)
             {
                 await Console.Out.WriteLineAsync(e.Message);
-                isValid = false;
+                _logger.LogError(e, $"{wikiPageUrl} is not valid");
             }
 
-            return isValid;
+            return foundUrl;
         }
 
-        public static string GetUrlForArticle(string articleSubject)
+        public string GetUrlForArticle(string articleSubject)
         {
             return _baseWikiUrl + articleSubject.Replace(" ", "_");
         }
